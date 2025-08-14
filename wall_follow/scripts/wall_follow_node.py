@@ -15,7 +15,7 @@ class WallFollow(Node):
     - 预处理：截取 ±(truncated_coverage_angle/2) 的扇区 + 简单平滑
     - 两点法（a=0.5rad, b=1.4rad, theta=0.9rad）估计 alpha、预测距离 D_{t+1}
     - 误差: e = D_{t+1} - desired_distance_left
-    - PID -> 转角（限幅 ±0.4），按角度分档给速度（与 C++ 逻辑一致）
+    - PID -> 转角（限幅 ±0.4），按角度分档给速度
     """
     def __init__(self):
         super().__init__('wall_follow_node')
@@ -32,11 +32,11 @@ class WallFollow(Node):
         self.desired_left = self.declare_parameter('desired_distance_left', 0.9).get_parameter_value().double_value
         self.lookahead_L  = self.declare_parameter('lookahead_distance', 1.0).get_parameter_value().double_value
 
-        # 截取的扇区宽度（弧度），必须覆盖到 b=1.4rad：默认 π（±90°）
+        # 截取的扇区宽度（弧度），需覆盖到 b=1.4rad：默认 π（±90°）
         self.trunc_angle  = self.declare_parameter('truncated_coverage_angle', float(np.pi)).get_parameter_value().double_value
         self.smooth_N     = int(self.declare_parameter('smoothing_filter_size', 5).get_parameter_value().integer_value)
 
-        # 速度档（与 C++ 逻辑一致：大角→用“high”档）
+        # 速度分档（角度越大→用较高速度变量名，仅作占位，可按需调整含义）
         self.v_high = self.declare_parameter('vel_high',   1.5).get_parameter_value().double_value
         self.v_med  = self.declare_parameter('vel_medium', 1.0).get_parameter_value().double_value
         self.v_low  = self.declare_parameter('vel_low',    0.5).get_parameter_value().double_value
@@ -46,8 +46,8 @@ class WallFollow(Node):
         self.integral   = 0.0
         self.prev_t     = None
 
-        self.max_steer = 0.4  # ≈ 23°
-        self.theta     = 0.9  # 与 C++ 一致
+        self.max_steer = 0.4
+        self.theta     = 0.9
         self.a_angle   = 0.5
         self.b_angle   = 1.4
 
@@ -70,7 +70,6 @@ class WallFollow(Node):
             return arr
         w = max(1, int(w))
         kernel = np.ones(w, dtype=float) / w
-        # same长度，边缘用nearest填补
         pad = w // 2
         arrp = np.pad(arr, (pad, pad), mode='edge')
         return np.convolve(arrp, kernel, mode='valid')
@@ -87,12 +86,11 @@ class WallFollow(Node):
         i0 = max(0, i0)
         i1 = min(len(msg.ranges) - 1, i1)
         if i1 < i0:
-            # 截不出来就返回全部
             ranges = np.array(msg.ranges, dtype=float)
         else:
             ranges = np.array(msg.ranges[i0:i1 + 1], dtype=float)
 
-        # NaN/inf/非正 处理为 0（与 C++ 一致）
+        # NaN/inf/非正 处理为 0
         bad = ~np.isfinite(ranges) | (ranges <= 0.0)
         ranges[bad] = 0.0
 
@@ -101,9 +99,7 @@ class WallFollow(Node):
         return ranges, inc
 
     def _get_range_at(self, filtered: np.ndarray, angle: float, angle_increment: float) -> float:
-        """在截取后的扇区内获得 angle（以车前为0，左为正）的距离。
-           C++: corrected_angle = angle + trunc/2; idx = floor(corrected/angle_inc)
-        """
+        """在截取后的扇区内获得 angle（以车前为0，左为正）的距离。"""
         corrected = angle + (self.trunc_angle / 2.0)
         idx = int(np.floor(corrected / max(angle_increment, 1e-6)))
         idx = max(0, min(idx, len(filtered) - 1))
@@ -119,7 +115,7 @@ class WallFollow(Node):
         alpha = atan2(a * cos(self.theta) - b, a * sin(self.theta))
         D     = b * cos(alpha)
         D1    = D + self.lookahead_L * sin(alpha)
-        err   = D1 - self.desired_left  # 与 C++ 保持一致：e = D_{t+1} - d_desired
+        err   = D1 - self.desired_left
         return err
 
     def _pid(self, err: float) -> (float, float):
@@ -132,15 +128,12 @@ class WallFollow(Node):
         self.prev_error = err
 
         steer = self.kp * err + self.kd * deriv + self.ki * self.integral
-        # C++ 用正角右转/左转的符号约定不同，这里保持几何方向：左墙 -> 大多需要负反馈
-        # 若方向相反，可把 steer *= -1
-        # 为与 C++ 更接近：不取负号，必要时你可以在参数中把 kp/kd 取负。
         steer = max(-self.max_steer, min(self.max_steer, steer))
 
-        # 分档速度（按 C++ 的逻辑：角度越大 → 用 "high" 档变量）
-        if abs(steer) > 0.349:          # >20°
+        # 分档速度（可按需求改成“角度越大→越慢”等策略）
+        if abs(steer) > 0.349:
             speed = self.v_high
-        elif abs(steer) > 0.174:        # >10°
+        elif abs(steer) > 0.174:
             speed = self.v_med
         else:
             speed = self.v_low
