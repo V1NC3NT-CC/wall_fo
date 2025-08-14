@@ -10,7 +10,7 @@ from ackermann_msgs.msg import AckermannDriveStamped
 
 class WallFollow(Node):
     """
-    ROS2 Wall Following (Python)
+    ROS2 Wall Following 
     - 订阅 /scan（Best Effort QoS）
     - 预处理：截取 ±(truncated_coverage_angle/2) 的扇区 + 简单平滑
     - 两点法（a=0.5rad, b=1.4rad, theta=0.9rad）估计 alpha、预测距离 D_{t+1}
@@ -20,11 +20,11 @@ class WallFollow(Node):
     def __init__(self):
         super().__init__('wall_follow_node')
 
-        # —— Topics（可运行时 remap）——
+        # Topics（可运行时 remap）
         self.lidar_topic = self.declare_parameter('scan_topic', '/scan').get_parameter_value().string_value
         self.drive_topic = self.declare_parameter('drive_topic', '/drive').get_parameter_value().string_value
 
-        # —— PID 与几何参数（可从 YAML 覆盖）——
+        #PID 与几何参数（可从 YAML 覆盖）
         self.kp = self.declare_parameter('kp', 1.5).get_parameter_value().double_value
         self.ki = self.declare_parameter('ki', 0.0).get_parameter_value().double_value
         self.kd = self.declare_parameter('kd', 0.3).get_parameter_value().double_value
@@ -36,7 +36,7 @@ class WallFollow(Node):
         self.trunc_angle  = self.declare_parameter('truncated_coverage_angle', float(np.pi)).get_parameter_value().double_value
         self.smooth_N     = int(self.declare_parameter('smoothing_filter_size', 5).get_parameter_value().integer_value)
 
-        # 速度分档（角度越大→用较高速度变量名，仅作占位，可按需调整含义）
+        # 速度分档（角度越大→用较高速度变量名）
         self.v_high = self.declare_parameter('vel_high',   1.5).get_parameter_value().double_value
         self.v_med  = self.declare_parameter('vel_medium', 1.0).get_parameter_value().double_value
         self.v_low  = self.declare_parameter('vel_low',    0.5).get_parameter_value().double_value
@@ -64,7 +64,7 @@ class WallFollow(Node):
             f"kp={self.kp} kd={self.kd} ki={self.ki} desired_left={self.desired_left}"
         )
 
-    # ---------- utils ----------
+    #  utils
     def _moving_avg(self, arr: np.ndarray, w: int) -> np.ndarray:
         if w <= 1:
             return arr
@@ -105,7 +105,7 @@ class WallFollow(Node):
         idx = max(0, min(idx, len(filtered) - 1))
         return float(filtered[idx])
 
-    # ---------- core ----------
+    #  core 
     def _compute_error(self, filtered: np.ndarray, angle_increment: float) -> float:
         a = self._get_range_at(filtered, self.a_angle, angle_increment)
         b = self._get_range_at(filtered, self.b_angle, angle_increment)
@@ -130,7 +130,7 @@ class WallFollow(Node):
         steer = self.kp * err + self.kd * deriv + self.ki * self.integral
         steer = max(-self.max_steer, min(self.max_steer, steer))
 
-        # 分档速度（可按需求改成“角度越大→越慢”等策略）
+        # 分档速度（可改成“角度越大→越慢”等策略）
         if abs(steer) > 0.349:
             speed = self.v_high
         elif abs(steer) > 0.174:
@@ -139,7 +139,7 @@ class WallFollow(Node):
             speed = self.v_low
         return steer, speed
 
-    # ---------- callbacks ----------
+    #  callbacks
     def scan_callback(self, msg: LaserScan):
         filtered, inc = self._truncate_ranges(msg)
         err = self._compute_error(filtered, inc)
